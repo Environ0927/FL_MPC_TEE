@@ -1,0 +1,100 @@
+############################
+# Python Cache / Compile
+############################
+__pycache__/
+*.py[cod]
+*$py.class
+
+############################
+# C / Build
+############################
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+############################
+# Virtual Environment
+############################
+.env
+.venv
+venv/
+env/
+ENV/
+
+############################
+# IDE / Editor
+############################
+.vscode/
+.idea/
+*.swp
+*.swo
+
+############################
+# Logs / Temp
+############################
+*.log
+tmp/
+temp/
+.cache/
+
+############################
+# Jupyter
+############################
+.ipynb_checkpoints/
+
+############################
+# Testing / Coverage
+############################
+.pytest_cache/
+.coverage
+htmlcov/
+
+############################
+# Dataset / Large Files
+############################
+data/HAR/
+data/MNIST/
+data/FashionMNIST/
+data/cifar-10-batches-py/
+data/*.tar.gz
+data/*.zip
+data/*.gz
+
+############################
+# Model Checkpoints
+############################
+checkpoints/
+saved_models/
+*.pth
+*.pt
+*.ckpt
+
+############################
+# Experiment Outputs
+############################
+runs/
+outputs/
+results/
+wandb/
+tensorboard/
+
+############################
+# OS Files
+############################
+.DS_Store
+Thumbs.db
+
+############################
+# Secret / Config
+############################
+*.pem
+*.key
+secrets.json
+
+############################
+# Optional Frameworks
+############################
+mpspdz/
+mp-spdz-*.tar.xz
