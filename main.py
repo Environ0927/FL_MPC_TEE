@@ -22,7 +22,7 @@ from data.mnist_like_loader import load_mnist, load_fmnist, dirichlet_split_indi
 from util.metrics import MetricsLogger, eval_metrics, estimate_comm_bytes
 
 
-from server import (
+from server_tee import (
     secure_aggregate_client_updates,
     plaintext_sum_client_updates, 
     max_abs_diff
@@ -83,7 +83,52 @@ def parse_args():
     parser.add_argument("--nbyz", help="# byzantines", type=int, default=6)
     parser.add_argument("--byz_type", help="type of attack", type=str, default="no", choices=["no", "trim_attack", "krum_attack",
                             "scaling_attack", "fltrust_attack", "label_flipping_attack", "min_max_attack", "min_sum_attack"])
+    parser.add_argument(
+        "--test",
+        type=str,
+        default=None,
+        choices=[
+            "personalized_fl_ml_mpc_x86_tee",
+            "approximate_fl_basic_mpc_arm_tee",
+            "secure_fl_attack_mpc_riscv_tee",
+        ],
+        help="指定FL+MPC+TEE参数安全转换专项测试类型；不指定时执行完整训练流程。",
+    )
 
+    parser.add_argument(
+        "--out_dir",
+        type=str,
+        default="./results/conversion_tests_tee",
+        help="FL+MPC+TEE参数转换专项测试结果输出目录。",
+    )
+
+    parser.add_argument(
+        "--scale",
+        type=int,
+        default=10**6,
+        help="固定点量化缩放因子。",
+    )
+
+    parser.add_argument(
+        "--ring_mod",
+        type=int,
+        default=2**62,
+        help="MPC整数环模数。",
+    )
+
+    parser.add_argument(
+        "--approx_dim",
+        type=int,
+        default=256,
+        help="近似联邦学习压缩梯度原始维度。",
+    )
+
+    parser.add_argument(
+        "--bucket_size",
+        type=int,
+        default=16,
+        help="近似联邦学习分桶大小。",
+    )
     return parser.parse_args()
 
 
@@ -500,5 +545,10 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = parse_args()     # parse arguments
-    main(args)      # call main with parsed arguments
+    args = parse_args()
+
+    if args.test is not None:
+        from conversion_tests_tee import run_conversion_test_tee
+        run_conversion_test_tee(args)
+    else:
+        main(args)
