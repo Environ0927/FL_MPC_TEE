@@ -22,19 +22,11 @@ from data.mnist_like_loader import load_mnist, load_fmnist, dirichlet_split_indi
 from util.metrics import MetricsLogger, eval_metrics, estimate_comm_bytes
 
 
-# 完整训练流程会用到 server_tee 中的安全聚合函数。
-# 但 --test 专项测试 7/8/9 不依赖这些函数，因此这里采用可选导入，
-# 避免 server_tee.py 缺少相关函数时，程序还未进入 --test 分支就直接退出。
-try:
-    from server_tee import (
-        secure_aggregate_client_updates,
-        plaintext_sum_client_updates,
-        max_abs_diff,
-    )
-except ImportError:
-    secure_aggregate_client_updates = None
-    plaintext_sum_client_updates = None
-    max_abs_diff = None
+from server_tee import (
+    secure_aggregate_client_updates,
+    plaintext_sum_client_updates, 
+    max_abs_diff
+)
 @torch.no_grad()
 def log_info(msg: str) -> None:
     print(f"[INFO] {msg}")
@@ -430,14 +422,6 @@ def main(args):
                     log_info("开始将模型参数转换为MPC计算份额。")
                     log_info("参数秘密共享处理开始执行。")
                     # ===== 安全聚合 =====
-                    if secure_aggregate_client_updates is None:
-                        raise ImportError(
-                            "当前 server_tee.py 未提供 secure_aggregate_client_updates、"
-                            "plaintext_sum_client_updates 或 max_abs_diff。"
-                            "专项测试请使用 python main.py --test <测试名>；"
-                            "如需运行完整训练流程，请在 server_tee.py 中补充安全聚合函数。"
-                        )
-
                     secure_sum, logical_server0, logical_server1 = secure_aggregate_client_updates(
                         grad_in,
                         scale=10**6,

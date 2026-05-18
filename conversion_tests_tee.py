@@ -9,13 +9,32 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-from server import (
-    RING_MOD,
-    DEFAULT_SCALE,
-    _mod_ring,
-    _to_fixed_point,
-    _signed_from_ring,
-)
+# ============================================================
+# 本文件为测试7/8/9的专项转换测试，故不依赖 server.py / server_tee.py。
+# 这样即使主训练流程的服务端文件命名变化，也不影响专项测试入口。
+# ============================================================
+
+RING_MOD = 2 ** 62
+DEFAULT_SCALE = 10 ** 7
+
+
+def _mod_ring(x: torch.Tensor, q: int = RING_MOD) -> torch.Tensor:
+    return torch.remainder(x, q)
+
+
+def _to_fixed_point(x: torch.Tensor, scale: int = DEFAULT_SCALE) -> torch.Tensor:
+    """
+    float tensor -> int64 fixed-point tensor
+    """
+    return torch.round(x * scale).to(torch.int64)
+
+
+def _signed_from_ring(x: torch.Tensor, q: int = RING_MOD) -> torch.Tensor:
+    """
+    将环元素恢复为有符号整数区间 [-q/2, q/2)。
+    """
+    half_q = q // 2
+    return torch.where(x >= half_q, x - q, x)
 
 
 # ============================================================
