@@ -9,10 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 
-# ============================================================
-# 本文件为测试7/8/9的专项转换测试，故不依赖 server.py / server_tee.py。
-# 这样即使主训练流程的服务端文件命名变化，也不影响专项测试入口。
-# ============================================================
 
 RING_MOD = 2 ** 62
 DEFAULT_SCALE = 10 ** 7
@@ -231,12 +227,96 @@ def compute_integer_reconstruct_error(
     }
 
 
-def print_integer_error(ierr: Dict[str, int], prefix: str = "份额重构整数误差统计") -> None:
+def print_integer_error(ierr: Dict[str, int], prefix: str = "mpc份额整数误差统计") -> None:
     log_info(
         f"{prefix}："
         f"max_integer_error={ierr['max_integer_error']}, "
         f"sum_integer_error={ierr['sum_integer_error']}, "
         f"num_error_elements={ierr['num_error_elements']}。"
+    )
+
+
+def build_ring_mapping_summary(
+    x_int: torch.Tensor,
+    q: int,
+) -> Dict[str, Any]:
+    """
+    通用整数环映射摘要：只描述整数参数向量映射至整数环，不混入份额生成或重构校验。
+    输出口径与 FL_MPC 专项测试保持一致。
+    """
+    x = x_int.detach().cpu().to(torch.int64).reshape(-1)
+    x_ring = torch.remainder(x, q)
+
+    return {
+        "ring_mod": int(q),
+        "x_int_dtype": str(x_int.dtype),
+        "x_int_dim": int(x.numel()),
+        "x_int_min": int(x.min().item()) if x.numel() else 0,
+        "x_int_max": int(x.max().item()) if x.numel() else 0,
+        "x_ring_min": int(x_ring.min().item()) if x_ring.numel() else 0,
+        "x_ring_max": int(x_ring.max().item()) if x_ring.numel() else 0,
+        "negative_integer_count": int((x < 0).sum().item()) if x.numel() else 0,
+        "ring_range_check": bool((x_ring >= 0).all().item() and (x_ring < q).all().item()) if x_ring.numel() else True,
+    }
+
+
+def print_ring_mapping_summary(summary: Dict[str, Any], name: str = "整数训练参数") -> None:
+    log_info(f"{name}映射至整数环完成：")
+    print(
+        f"  - 整数环模数 q={summary['ring_mod']}，"
+        f"参数维度={summary['x_int_dim']}，数据类型={summary['x_int_dtype']}。"
+    )
+    print(
+        f"  - 映射前整数范围=[{summary['x_int_min']}, {summary['x_int_max']}]，"
+        f"负数元素数量={summary['negative_integer_count']}。"
+    )
+    print(
+        f"  - 映射后环上范围=[{summary['x_ring_min']}, {summary['x_ring_max']}]，"
+        f"范围校验 x_ring ∈ [0, q) -> {summary['ring_range_check']}。"
+    )
+
+
+def build_basic_mpc_ring_mapping_summary(
+    mpc_integer_matrix: torch.Tensor,
+    mpc_integer_vector: torch.Tensor,
+    q: int,
+) -> Dict[str, Any]:
+    """
+    压缩参数专用：展示 [sparse_index, bucket_id, quantized_value] 三元组向量的整数环映射结果。
+    输出口径与 FL_MPC 测试5保持一致。
+    """
+    matrix = mpc_integer_matrix.detach().cpu().to(torch.int64)
+    vector = mpc_integer_vector.detach().cpu().to(torch.int64).reshape(-1)
+    x_ring = torch.remainder(vector, q)
+
+    return {
+        "ring_mod": int(q),
+        "mpc_matrix_shape": list(matrix.shape),
+        "mpc_vector_dim": int(vector.numel()),
+        "triplet_format": "[sparse_index, bucket_id, quantized_value]",
+        "x_int_min": int(vector.min().item()) if vector.numel() else 0,
+        "x_int_max": int(vector.max().item()) if vector.numel() else 0,
+        "x_ring_min": int(x_ring.min().item()) if x_ring.numel() else 0,
+        "x_ring_max": int(x_ring.max().item()) if x_ring.numel() else 0,
+        "negative_quantized_value_count": int((matrix[:, 2] < 0).sum().item()) if matrix.numel() else 0,
+        "ring_range_check": bool((x_ring >= 0).all().item() and (x_ring < q).all().item()) if x_ring.numel() else True,
+    }
+
+
+def print_basic_mpc_ring_mapping_summary(summary: Dict[str, Any]) -> None:
+    log_info("整数参数向量映射至整数环完成：")
+    print(
+        f"  - 整数环模数 q={summary['ring_mod']}，"
+        f"MPC矩阵形状={summary['mpc_matrix_shape']}，整数向量维度={summary['mpc_vector_dim']}。"
+    )
+    print(
+        f"  - 参数格式={summary['triplet_format']}，"
+        f"整数参数范围=[{summary['x_int_min']}, {summary['x_int_max']}]，"
+        f"负数量化值数量={summary['negative_quantized_value_count']}。"
+    )
+    print(
+        f"  - 环上映射后参数范围=[{summary['x_ring_min']}, {summary['x_ring_max']}]，"
+        f"范围校验 x_ring ∈ [0, q) -> {summary['ring_range_check']}。"
     )
 
 
@@ -388,7 +468,8 @@ def validate_tee_json_object(
 
 
 def print_tee_object_summary(tee_objects: List[Dict[str, Any]], arch_name: str) -> None:
-    log_info(f"{arch_name}架构可信执行环境适配模块调用成功，TEE受保护参数对象生成结果如下：")
+    log_info(f"{arch_name}架构可信执行环境适配模块调用成功，MPC计算份额成功转换为TEE侧受保护参数对象。")
+    log_info("TEE受保护参数对象生成结果如下：")
     for obj in tee_objects:
         print(
             f"  - object_name={obj['object_name']}, "
@@ -509,12 +590,15 @@ def run_personalized_fl_ml_mpc_x86_tee(args: Any) -> None:
 
     x_int = _to_fixed_point(vector, scale=scale)
     qerr = compute_quantization_error(vector, x_int, scale)
-    log_info(f"固定点量化完成：scale={scale}，整数参数维度={x_int.numel()}。")
-    log_info("整数训练参数已成功映射至整数环。")
+    log_info(f"固定点量化整数训练参数完成：scale={scale}，整数参数维度={x_int.numel()}。")
     print_quantization_error(qerr)
 
+    ring_mapping_summary = build_ring_mapping_summary(x_int=x_int, q=q)
+    print_ring_mapping_summary(ring_mapping_summary, name="整数训练参数")
+
+    log_info("开始执行两方加法秘密共享处理：随机生成第一份秘密份额，并基于环上减法生成第二份秘密份额。")
     s0, s1 = two_party_share_integer_vector(x_int, q=q)
-    log_info("整数环参数已成功拆分为机器学习型MPC所需的两方计算份额。")
+    log_info("面向机器学习的多方安全计算所需的两方MPC计算份额生成成功。")
     print_share_summary(s0, s1, q)
 
     tee_metadata = {
@@ -556,11 +640,14 @@ def run_personalized_fl_ml_mpc_x86_tee(args: Any) -> None:
     log_info(f"TEE受保护参数对象转换校验结果：{tee_object_check}")
 
     if not reconstruct_check:
-        raise AssertionError("份额重构结果与量化后整数参数不一致。")
+        raise AssertionError("份额计算结果与量化后整数参数不一致。")
     if not structure_check:
         raise AssertionError("参数结构一致性校验失败。")
     if not tee_object_check:
         raise AssertionError("TEE受保护参数对象转换校验失败。")
+
+    log_info("mpc份额校验通过：份额结果与量化后整数参数一致。")
+    log_info("TEE受保护参数对象转换校验通过。")
 
     save_tensor_list(os.path.join(out_dir, "share_0.pt"), [s0])
     save_tensor_list(os.path.join(out_dir, "share_1.pt"), [s1])
@@ -653,8 +740,15 @@ def run_approximate_fl_basic_mpc_arm_tee(args: Any) -> None:
     log_info(f"可用于安全计算的整数参数向量生成成功：维度={mpc_integer_vector.numel()}。")
     print(f"  - 前5个MPC三元组:\n{mpc_integer_matrix[:5]}")
 
+    ring_mapping_summary = build_basic_mpc_ring_mapping_summary(
+        mpc_integer_matrix=mpc_integer_matrix,
+        mpc_integer_vector=mpc_integer_vector,
+        q=q,
+    )
+    print_basic_mpc_ring_mapping_summary(ring_mapping_summary)
+
+    log_info("开始执行两方加法秘密共享处理：随机生成第一份秘密份额，并基于环上减法生成第二份秘密份额。")
     s0, s1 = two_party_share_integer_vector(mpc_integer_vector, q=q)
-    log_info("整数参数向量已成功映射至整数环，并完成两方加法秘密共享处理。")
     log_info("基础算子型多方安全计算所需的两方MPC计算份额生成成功。")
     print_share_summary(s0, s1, q)
 
@@ -694,16 +788,19 @@ def run_approximate_fl_basic_mpc_arm_tee(args: Any) -> None:
     reconstruct_check = torch.equal(rec_int, mpc_integer_vector.detach().cpu().to(torch.int64))
 
     dimension_check = int(mpc_integer_vector.numel()) == int(sparse_indices.numel() * 3)
-    print_integer_error(ierr, prefix="基础算子MPC整数向量重构误差统计")
+    print_integer_error(ierr, prefix="基础算子MPC整数向量计算误差统计")
     log_info(f"索引信息、数值信息和参数维度一致性校验结果：{index_value_check and dimension_check}")
     log_info(f"TEE受保护参数对象转换校验结果：{tee_object_check}")
 
     if not reconstruct_check:
-        raise AssertionError("基础算子型MPC份额重构结果不一致。")
+        raise AssertionError("基础算子型MPC份额计算结果不一致。")
     if not (index_value_check and dimension_check):
         raise AssertionError("索引信息、数值信息和参数维度一致性校验失败。")
     if not tee_object_check:
         raise AssertionError("TEE受保护参数对象转换校验失败。")
+
+    log_info("索引信息、数值信息和参数维度一致性校验通过。")
+    log_info("TEE受保护参数对象转换校验通过。")
 
     save_tensor_list(os.path.join(out_dir, "share_0.pt"), [s0])
     save_tensor_list(os.path.join(out_dir, "share_1.pt"), [s1])
@@ -765,10 +862,11 @@ def run_secure_fl_attack_mpc_riscv_tee(args: Any) -> None:
     log_info(f"训练梯度向量化完成：总维度={vector.numel()}，层数={len(structure)}。")
     print_structure_mapping(structure)
 
+    log_info("待转换参数与安全辅助参数关联完成。")
+
     x_int = _to_fixed_point(vector, scale=scale)
     qerr = compute_quantization_error(vector, x_int, scale)
-    log_info(f"固定点量化完成：scale={scale}，整数参数维度={x_int.numel()}。")
-    log_info("整数训练参数已成功映射至整数环。")
+    log_info(f"固定点量化整数训练参数完成：scale={scale}，整数参数维度={x_int.numel()}。")
     print_quantization_error(qerr)
 
     grad_hash = hash_tensor_int64(x_int)
@@ -782,14 +880,18 @@ def run_secure_fl_attack_mpc_riscv_tee(args: Any) -> None:
     }
     binding_digest = hash_json(parameter_check_info)
 
-    log_info("待转换参数与安全辅助参数关联完成。")
-    log_info("安全辅助参数绑定或校验处理完成，参数校验信息生成成功。")
+    ring_mapping_summary = build_ring_mapping_summary(x_int=x_int, q=q)
+    print_ring_mapping_summary(ring_mapping_summary, name="整数训练参数")
+
+    log_info("开始执行两方加法秘密共享处理：随机生成第一份秘密份额，并基于环上减法生成第二份秘密份额。")
+    s0, s1 = two_party_share_integer_vector(x_int, q=q)
+    log_info("面向复杂攻击的多方安全计算所需的两方MPC计算份额生成成功。")
+    print_share_summary(s0, s1, q)
+
+    log_info("安全辅助参数绑定处理完成，参数校验信息生成成功。")
+    log_info("安全辅助参数绑定信息：")
     print(f"  - gradient_hash: {grad_hash}")
     print(f"  - binding_digest: {binding_digest}")
-
-    s0, s1 = two_party_share_integer_vector(x_int, q=q)
-    log_info("整数训练参数已成功拆分为抗攻击型MPC所需的两方计算份额。")
-    print_share_summary(s0, s1, q)
 
     tee_metadata = {
         "test_id": 9,
@@ -836,7 +938,7 @@ def run_secure_fl_attack_mpc_riscv_tee(args: Any) -> None:
     binding_check = rec_hash == grad_hash
 
     print_integer_error(ierr)
-    log_info("抗攻击MPC份额重构与安全辅助参数绑定校验结果：")
+    log_info("抗攻击MPC份额计算与安全辅助参数绑定校验结果：")
     print(f"  - reconstructed_gradient_hash: {rec_hash}")
     print(f"  - reconstruct_check: {reconstruct_check}")
     print(f"  - binding_check: {binding_check}")
@@ -844,13 +946,17 @@ def run_secure_fl_attack_mpc_riscv_tee(args: Any) -> None:
     log_info(f"TEE受保护参数对象转换校验结果：{tee_object_check}")
 
     if not reconstruct_check:
-        raise AssertionError("秘密份额重构结果与量化后整数参数不一致。")
+        raise AssertionError("秘密份额计算结果与量化后整数参数不一致。")
     if not binding_check:
         raise AssertionError("安全辅助参数绑定校验失败。")
     if not structure_check:
         raise AssertionError("参数结构一致性校验失败。")
     if not tee_object_check:
         raise AssertionError("TEE受保护参数对象转换校验失败。")
+
+    log_info("秘密份额一致性校验通过。")
+    log_info("安全辅助参数绑定校验通过。")
+    log_info("TEE受保护参数对象转换校验通过。")
 
     save_tensor_list(os.path.join(out_dir, "share_0.pt"), [s0])
     save_tensor_list(os.path.join(out_dir, "share_1.pt"), [s1])
@@ -888,6 +994,290 @@ def run_secure_fl_attack_mpc_riscv_tee(args: Any) -> None:
     log_info("测试9执行完成，参数转换过程无异常报错。")
 
 
+
+# ============================================================
+# 4.1.10 个性化 FL + 基础算子型 MPC + ARM TEE
+# ============================================================
+
+def run_personalized_fl_basic_mpc_arm_tee(args: Any) -> None:
+    scale = int(get_arg(args, "scale", 10 ** 6))
+    q = int(get_arg(args, "ring_mod", RING_MOD))
+    out_root = str(get_arg(args, "out_dir", "./results/conversion_tests_tee"))
+
+    out_dir = os.path.join(out_root, "test_10_personalized_fl_basic_mpc_arm_tee")
+    ensure_dir(out_dir)
+
+    log_info("===========================================================")
+    log_info("测试编号10：个性化联邦学习、基础算子型多方安全计算与ARM架构TEE间的参数安全转换功能。")
+    log_info("输入技术子类型识别成功：联邦学习子类型=面向个性化数据的高精度无损联邦学习；MPC子类型=面向基础算子的多方安全计算；TEE类型=ARM架构可信执行环境。")
+
+    named_grads, roles = generate_mock_personalized_fl_gradients()
+    log_info("个性化联邦学习侧训练梯度参数读取成功。")
+    log_info("待转换梯度参数结构识别成功。")
+    print_gradient_table(named_grads, roles, title="个性化联邦学习训练梯度参数明细")
+
+    vector, structure = flatten_named_tensors(named_grads, roles=roles)
+    structure_check = check_structure_consistency(vector, structure)
+    log_info(f"训练梯度向量化完成：总维度={vector.numel()}，层数={len(structure)}。")
+    print_structure_mapping(structure)
+
+    x_int = _to_fixed_point(vector, scale=scale)
+    qerr = compute_quantization_error(vector, x_int, scale)
+    log_info(f"固定点量化整数训练参数完成：scale={scale}，整数参数维度={x_int.numel()}。")
+    print_quantization_error(qerr)
+
+    ring_mapping_summary = build_ring_mapping_summary(x_int=x_int, q=q)
+    print_ring_mapping_summary(ring_mapping_summary, name="整数训练参数")
+
+    # 基础算子型 MPC 这里直接以统一整数向量作为基础算子输入，
+    # 两方加法秘密共享后由基础算子完成加法/重构类处理。
+    log_info("开始执行两方加法秘密共享处理：随机生成第一份秘密份额，并基于环上减法生成第二份秘密份额。")
+    s0, s1 = two_party_share_integer_vector(x_int, q=q)
+    log_info("基础算子型多方安全计算所需的两方MPC计算份额生成成功。")
+    print_share_summary(s0, s1, q)
+
+    tee_metadata = {
+        "test_id": 10,
+        "fl_type": "personalized_fl",
+        "mpc_type": "basic_operator_mpc",
+        "tee_type": "arm",
+        "vector_dim": int(vector.numel()),
+        "scale": scale,
+        "ring_mod": q,
+    }
+    tee_objects = [
+        make_tee_protected_tensor_object(
+            arch="ARM",
+            object_name="basic_mpc_share_0",
+            tensor=s0,
+            metadata={**tee_metadata, "share_owner": "server0"},
+        ),
+        make_tee_protected_tensor_object(
+            arch="ARM",
+            object_name="basic_mpc_share_1",
+            tensor=s1,
+            metadata={**tee_metadata, "share_owner": "server1"},
+        ),
+    ]
+    print_tee_object_summary(tee_objects, arch_name="ARM")
+
+    tee_object_check = (
+        validate_tee_tensor_object(tee_objects[0], expected_arch="ARM", expected_name="basic_mpc_share_0", source_tensor=s0)
+        and validate_tee_tensor_object(tee_objects[1], expected_arch="ARM", expected_name="basic_mpc_share_1", source_tensor=s1)
+    )
+
+    rec_int = reconstruct_integer_vector(s0, s1, q=q)
+    ierr = compute_integer_reconstruct_error(x_int, rec_int)
+    reconstruct_check = torch.equal(rec_int, x_int.detach().cpu().to(torch.int64))
+    dimension_check = int(rec_int.numel()) == int(x_int.numel()) == int(vector.numel())
+
+    print_integer_error(ierr)
+    log_info(f"转换前后参数维度一致性校验结果：{dimension_check}")
+    log_info(f"参数结构一致性校验结果：{structure_check}")
+    log_info(f"TEE受保护参数对象转换校验结果：{tee_object_check}")
+
+    if not reconstruct_check:
+        raise AssertionError("份额计算结果与量化后整数参数不一致。")
+    if not dimension_check:
+        raise AssertionError("转换前后参数维度一致性校验失败。")
+    if not structure_check:
+        raise AssertionError("参数结构一致性校验失败。")
+    if not tee_object_check:
+        raise AssertionError("TEE受保护参数对象转换校验失败。")
+
+    log_info("份额计算结果正确，转换前后参数维度一致。")
+    log_info("TEE受保护参数对象转换校验通过。")
+
+    save_tensor_list(os.path.join(out_dir, "share_0.pt"), [s0])
+    save_tensor_list(os.path.join(out_dir, "share_1.pt"), [s1])
+    save_tensor_list(os.path.join(out_dir, "quantized_vector.pt"), [x_int])
+    save_json(os.path.join(out_dir, "tee_protected_objects.json"), {"tee_objects": tee_objects})
+
+    check_result = {
+        "test_id": 10,
+        "test_name": "personalized_fl_basic_mpc_arm_tee",
+        "fl_type": "面向个性化数据的高精度无损联邦学习",
+        "mpc_type": "面向基础算子的多方安全计算",
+        "tee_type": "ARM架构可信执行环境",
+        "vector_dim": int(vector.numel()),
+        "num_layers": len(structure),
+        "structure": [asdict(item) for item in structure],
+        "scale": scale,
+        "ring_mod": q,
+        "quantization_error": qerr,
+        "integer_reconstruct_error": ierr,
+        "reconstruct_check": bool(reconstruct_check),
+        "dimension_check": bool(dimension_check),
+        "structure_check": bool(structure_check),
+        "tee_object_check": bool(tee_object_check),
+        "status": "PASS",
+    }
+    save_json(os.path.join(out_dir, "check_result.json"), check_result)
+
+    print_file_outputs(out_dir, ["share_0.pt", "share_1.pt", "quantized_vector.pt", "tee_protected_objects.json", "check_result.json"])
+    log_info("测试10执行完成，参数转换过程无异常报错。")
+
+
+# ============================================================
+# 4.1.11 近似 FL + 机器学习型 MPC + x86 TEE
+# ============================================================
+
+def run_approximate_fl_ml_mpc_x86_tee(args: Any) -> None:
+    q = int(get_arg(args, "ring_mod", RING_MOD))
+    out_root = str(get_arg(args, "out_dir", "./results/conversion_tests_tee"))
+    approx_dim = int(get_arg(args, "approx_dim", 256))
+    bucket_size = int(get_arg(args, "bucket_size", 16))
+
+    out_dir = os.path.join(out_root, "test_11_approximate_fl_ml_mpc_x86_tee")
+    ensure_dir(out_dir)
+
+    log_info("===========================================================")
+    log_info("测试编号11：近似联邦学习、机器学习型多方安全计算与x86架构TEE间的参数安全转换功能。")
+    log_info("输入技术子类型识别成功：联邦学习子类型=面向大规模数据的近似联邦学习；MPC子类型=面向机器学习的多方安全计算；TEE类型=x86架构可信执行环境。")
+
+    compressed = generate_mock_approximate_fl_compressed_gradient(
+        dim=approx_dim,
+        bucket_size=bucket_size,
+    )
+
+    sparse_indices = compressed["sparse_indices"]
+    bucket_ids = compressed["bucket_ids"]
+    selected_values = compressed["selected_values"]
+    quantized_values = compressed["quantized_values"]
+
+    log_info("近似联邦学习侧量化梯度或稀疏梯度参数读取成功。")
+    compression_ratio = float(sparse_indices.numel() / compressed["dim"])
+
+    log_info("近似联邦学习压缩参数明细：")
+    print(f"  - 原始梯度维度: {compressed['dim']}")
+    print(f"  - 稀疏非零项数量: {sparse_indices.numel()}")
+    print(f"  - 压缩保留比例: {compression_ratio:.4f}")
+    print(f"  - 分桶大小: {compressed['bucket_size']}")
+    print(f"  - 量化缩放因子: {compressed['scale']}")
+    print(f"  - 前10个稀疏索引: {sparse_indices[:10].tolist()}")
+    print(f"  - 前10个分桶编号: {bucket_ids[:10].tolist()}")
+    print(f"  - 前10个原始浮点值: {[round(float(x), 8) for x in selected_values[:10].tolist()]}")
+    print(f"  - 前10个量化整数值: {quantized_values[:10].tolist()}")
+
+    index_value_check = (
+        sparse_indices.numel() == bucket_ids.numel()
+        and sparse_indices.numel() == quantized_values.numel()
+    )
+    if not index_value_check:
+        raise AssertionError("索引信息、分桶编号和值信息数量不一致。")
+
+    log_info("压缩参数的索引和值完成分离，并生成对应参数索引信息和值信息。")
+
+    # 机器学习型 MPC 这里将索引、分桶和值均作为训练参数描述的一部分，
+    # 统一规范化为整数训练参数份额。
+    mpc_training_matrix = torch.stack(
+        [
+            sparse_indices.to(torch.int64),
+            bucket_ids.to(torch.int64),
+            quantized_values.to(torch.int64),
+        ],
+        dim=1,
+    )
+    mpc_training_vector = mpc_training_matrix.reshape(-1)
+
+    log_info("参数索引和值已成功转换为整数表示。")
+    log_info(f"整数训练参数向量生成成功：维度={mpc_training_vector.numel()}。")
+    print(f"  - 前5个MPC训练参数三元组:\n{mpc_training_matrix[:5]}")
+
+    ring_mapping_summary = build_basic_mpc_ring_mapping_summary(
+        mpc_integer_matrix=mpc_training_matrix,
+        mpc_integer_vector=mpc_training_vector,
+        q=q,
+    )
+    print_basic_mpc_ring_mapping_summary(ring_mapping_summary)
+
+    log_info("开始执行两方加法秘密共享处理：随机生成第一份秘密份额，并基于环上减法生成第二份秘密份额。")
+    s0, s1 = two_party_share_integer_vector(mpc_training_vector, q=q)
+    log_info("机器学习型多方安全计算所需的MPC训练参数份额生成成功。")
+    print_share_summary(s0, s1, q)
+
+    tee_metadata = {
+        "test_id": 11,
+        "fl_type": "approximate_fl",
+        "mpc_type": "ml_mpc",
+        "tee_type": "x86",
+        "original_dim": int(compressed["dim"]),
+        "sparse_nnz": int(sparse_indices.numel()),
+        "compression_ratio": compression_ratio,
+        "ring_mod": q,
+    }
+    tee_objects = [
+        make_tee_protected_tensor_object(
+            arch="x86",
+            object_name="ml_mpc_training_share_0",
+            tensor=s0,
+            metadata={**tee_metadata, "share_owner": "server0"},
+        ),
+        make_tee_protected_tensor_object(
+            arch="x86",
+            object_name="ml_mpc_training_share_1",
+            tensor=s1,
+            metadata={**tee_metadata, "share_owner": "server1"},
+        ),
+    ]
+    print_tee_object_summary(tee_objects, arch_name="x86")
+
+    tee_object_check = (
+        validate_tee_tensor_object(tee_objects[0], expected_arch="x86", expected_name="ml_mpc_training_share_0", source_tensor=s0)
+        and validate_tee_tensor_object(tee_objects[1], expected_arch="x86", expected_name="ml_mpc_training_share_1", source_tensor=s1)
+    )
+
+    rec_int = reconstruct_integer_vector(s0, s1, q=q)
+    ierr = compute_integer_reconstruct_error(mpc_training_vector, rec_int)
+    reconstruct_check = torch.equal(rec_int, mpc_training_vector.detach().cpu().to(torch.int64))
+    dimension_check = int(mpc_training_vector.numel()) == int(sparse_indices.numel() * 3)
+
+    print_integer_error(ierr, prefix="机器学习型MPC训练参数份额计算误差统计")
+    log_info(f"索引信息、数值信息和参数维度一致性校验结果：{index_value_check and dimension_check}")
+    log_info(f"TEE受保护参数对象转换校验结果：{tee_object_check}")
+
+    if not reconstruct_check:
+        raise AssertionError("MPC训练参数份额计算结果不一致。")
+    if not (index_value_check and dimension_check):
+        raise AssertionError("索引信息、数值信息和参数维度一致性校验失败。")
+    if not tee_object_check:
+        raise AssertionError("TEE受保护参数对象转换校验失败。")
+
+    log_info("索引信息、数值信息和参数维度一致性校验通过。")
+    log_info("TEE受保护参数对象转换校验通过。")
+
+    save_tensor_list(os.path.join(out_dir, "share_0.pt"), [s0])
+    save_tensor_list(os.path.join(out_dir, "share_1.pt"), [s1])
+    save_tensor_list(os.path.join(out_dir, "mpc_training_vector.pt"), [mpc_training_vector])
+    save_tensor_list(os.path.join(out_dir, "mpc_training_matrix.pt"), [mpc_training_matrix])
+    save_json(os.path.join(out_dir, "tee_protected_objects.json"), {"tee_objects": tee_objects})
+
+    check_result = {
+        "test_id": 11,
+        "test_name": "approximate_fl_ml_mpc_x86_tee",
+        "fl_type": "面向大规模数据的近似联邦学习",
+        "mpc_type": "面向机器学习的多方安全计算",
+        "tee_type": "x86架构可信执行环境",
+        "original_dim": int(compressed["dim"]),
+        "bucket_size": int(compressed["bucket_size"]),
+        "sparse_nnz": int(sparse_indices.numel()),
+        "compression_ratio": compression_ratio,
+        "mpc_training_vector_dim": int(mpc_training_vector.numel()),
+        "format": "[sparse_index, bucket_id, quantized_value]",
+        "ring_mod": q,
+        "integer_reconstruct_error": ierr,
+        "reconstruct_check": bool(reconstruct_check),
+        "index_value_dimension_check": bool(index_value_check and dimension_check),
+        "tee_object_check": bool(tee_object_check),
+        "status": "PASS",
+    }
+    save_json(os.path.join(out_dir, "check_result.json"), check_result)
+
+    print_file_outputs(out_dir, ["share_0.pt", "share_1.pt", "mpc_training_vector.pt", "mpc_training_matrix.pt", "tee_protected_objects.json", "check_result.json"])
+    log_info("测试11执行完成，参数转换过程无异常报错。")
+
+
+
 # ============================================================
 # 统一入口
 # ============================================================
@@ -899,5 +1289,9 @@ def run_conversion_test_tee(args: Any) -> None:
         run_approximate_fl_basic_mpc_arm_tee(args)
     elif args.test == "secure_fl_attack_mpc_riscv_tee":
         run_secure_fl_attack_mpc_riscv_tee(args)
+    elif args.test == "personalized_fl_basic_mpc_arm_tee":
+        run_personalized_fl_basic_mpc_arm_tee(args)
+    elif args.test == "approximate_fl_ml_mpc_x86_tee":
+        run_approximate_fl_ml_mpc_x86_tee(args)
     else:
         raise ValueError(f"未知测试类型：{args.test}")
